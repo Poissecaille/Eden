@@ -1,0 +1,25 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://world/world_generator.gd" id="1_world"]
+[ext_resource type="Script" path="res://world/camera_controller.gd" id="2_camera"]
+
+[node name="World" type="Node2D" node_paths=PackedStringArray("ground", "info_label")]
+script = ExtResource("1_world")
+ground = NodePath("Ground")
+info_label = NodePath("HUD/Info")
+
+[node name="Ground" type="TileMapLayer" parent="."]
+
+[node name="Camera2D" type="Camera2D" parent="." node_paths=PackedStringArray("world")]
+script = ExtResource("2_camera")
+world = NodePath("..")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="Info" type="Label" parent="HUD"]
+offset_left = 12.0
+offset_top = 8.0
+offset_right = 900.0
+offset_bottom = 60.0
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4
