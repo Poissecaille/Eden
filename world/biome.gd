@@ -3,27 +3,58 @@ class_name Biome
 extends Resource
 ## Un biome = une plage d'élévation et d'humidité (valeurs normalisées 0..1).
 ## Les biomes sont testés dans l'ordre du tableau : le premier qui correspond gagne.
+##
+## Exemple : Plaine a max_height = 0.6 -> toute case sous 0.6 d'élévation qui n'a pas
+## déjà été prise par un biome placé avant (eau, sable, marais, désert) devient Plaine.
 
+# Nom affiché (pour s'y retrouver dans l'inspecteur).
 @export var name := ""
-## Couleur de la tuile placeholder (utilisée tant qu'aucune vraie TileSet n'est assignée).
+## Couleur unie utilisée quand le biome n'a pas de texture (atlas_coords = (-1, -1)).
 @export var color := Color.WHITE
+
+# --- Conditions pour qu'une case appartienne à ce biome ---
+# Élévation strictement inférieure à cette valeur.
 @export_range(0.0, 1.01) var max_height := 1.01
+# Humidité comprise entre min_moisture (inclus) et max_moisture (exclu).
 @export_range(0.0, 1.01) var min_moisture := 0.0
 @export_range(0.0, 1.01) var max_moisture := 1.01
-## Coordonnées de la tuile dans l'atlas de ta vraie TileSet. Ignoré en mode placeholder.
+
+# --- Texture dans un atlas de la TileSet (terrain_tileset.tres) ---
+# Source 0 = grass_atlas.png : chaque texture occupe un bloc de 5 x 3 tuiles de 64 px ;
+#            la texture de la colonne c et de la ligne r de sources/grass_sheet.jpg
+#            commence en (5·c, 3·r).
+## Id de la source d'atlas (l'image) dans la TileSet où se trouve la texture du biome.
+@export var source_id := 0
+## Coin haut-gauche du bloc de texture dans l'atlas ; (-1, -1) = pas de texture, couleur unie.
 @export var atlas_coords := Vector2i(-1, -1)
+## Taille (en tuiles) du bloc de texture qui commence à `atlas_coords` et se répète sur la carte.
+@export var pattern_size := Vector2i(1, 1)
+## Blocs de texture supplémentaires (coin haut-gauche, même `pattern_size`), répartis par plaques.
+@export var extra_variants: Array[Vector2i] = []
+
+# --- Sol emprunté à un autre biome ---
+## Si renseigné, le sol de ce biome est peint avec la texture de ce biome-là
+## (ex. la forêt a pour sol la Plaine : herbe sous les arbres). Ses propres texture et
+## couleur sont alors ignorées.
+@export var ground_biome: Biome
+
+# --- Arbres (sprites posés par-dessus, voir tree_scatter.gd) ---
+## Nombre moyen d'arbres par case au cœur du biome (0 = aucun). La densité baisse près du
+## bord, et quelques arbres débordent sur les cases voisines de son `ground_biome`.
+@export_range(0.0, 4.0) var tree_density := 0.0
 
 
+# Vrai si une case avec cette élévation et cette humidité appartient à ce biome.
 func matches(height: float, moisture: float) -> bool:
 	return height < max_height and moisture >= min_moisture and moisture < max_moisture
 
 
-static func make(biome_name: String, biome_color: Color, height_max: float,
-		moisture_min := 0.0, moisture_max := 1.01) -> Biome:
-	var biome := Biome.new()
-	biome.name = biome_name
-	biome.color = biome_color
-	biome.max_height = height_max
-	biome.min_moisture = moisture_min
-	biome.max_moisture = moisture_max
-	return biome
+# static func make(biome_name: String, biome_color: Color, height_max: float,
+# 		moisture_min := 0.0, moisture_max := 1.01) -> Biome:
+# 	var biome := Biome.new()
+# 	biome.name = biome_name
+# 	biome.color = biome_color
+# 	biome.max_height = height_max
+# 	biome.min_moisture = moisture_min
+# 	biome.max_moisture = moisture_max
+# 	return biome
