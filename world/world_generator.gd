@@ -10,8 +10,8 @@ extends Node2D
 ##   3. on pose la tuile du biome : une texture de l'atlas, ou une couleur unie ;
 ##   4. si le biome a des variantes, on les pose sur des couches au-dessus,
 ##      que le shader variant_blend.gdshader découpe en taches aux bords doux.
-##   5. les biomes qui ont des arbres (ex. forêt) reçoivent des sprites d'arbres par-dessus,
-##      de plus en plus clairsemés vers leur bord.
+##   5. les biomes qui ont des objets (arbres en forêt, buttes en collines…) reçoivent des
+##      sprites par-dessus, de plus en plus clairsemés vers leur bord.
 
 # Émis à la fin de chaque génération (la caméra l'écoute pour se recadrer).
 signal generated
@@ -36,14 +36,14 @@ const ISLAND_FALLOFF_END := 1.2
 # Décalage maximal du bruit des variantes. Reste modéré : avec de grandes coordonnées,
 # le bruit du shader perd en précision.
 const NOISE_OFFSET_RANGE := 1000.0
-# Nombre de cases autour d'un biome à arbres où quelques arbres peuvent déborder sur son sol.
-const TREE_SPILL_RADIUS := 2
-# Emplacements tirés au hasard par case pour les arbres (chacun reçoit un arbre ou non).
-const TREE_CANDIDATES_PER_CELL := 3
-# Valeur du masque flou (0 = hors du biome, 1 = en plein cœur) où les arbres commencent
-# à apparaître / atteignent leur pleine densité : de rares arbres débordent sur le bord.
-const TREE_MASK_START := 0.3
-const TREE_MASK_FULL := 0.8
+# Nombre de cases autour d'un biome à objets où quelques objets peuvent déborder sur son sol.
+const PROP_SPILL_RADIUS := 2
+# Emplacements tirés au hasard par case pour les objets (chacun reçoit un objet ou non).
+const PROP_CANDIDATES_PER_CELL := 3
+# Valeur du masque flou (0 = hors du biome, 1 = en plein cœur) où les objets commencent
+# à apparaître / atteignent leur pleine densité : de rares objets débordent sur le bord.
+const PROP_MASK_START := 0.3
+const PROP_MASK_FULL := 0.8
 
 # ---------------------------------------------------------------------------
 # Réglages (visibles dans l'inspecteur du nœud World)
@@ -53,8 +53,8 @@ const TREE_MASK_FULL := 0.8
 @export var ground: TileMapLayer
 # Texte d'aide affiché en haut de l'écran (seed + touches).
 @export var info_label: Label
-# Nœud qui dessine les arbres (sprites) par-dessus les tuiles.
-@export var trees: TreeScatter
+# Nœud qui dessine les objets du décor (arbres, buttes…) par-dessus les tuiles.
+@export var props: PropScatter
 
 # Taille de la carte, en nombre de cases.
 @export var map_size := Vector2i(200, 120)
@@ -208,8 +208,8 @@ func generate() -> void:
 				# Étape 3b : biome sans texture -> tuile de couleur unie n° b.
 				ground.set_cell(cell, COLOR_SOURCE_ID, Vector2i(ground_index, 0))
 
-	# --- Étape 5 : les arbres, posés par-dessus ---
-	_place_trees()
+	# --- Étape 5 : les objets du décor, posés par-dessus ---
+	_place_props()
 
 	_update_info()
 	generated.emit()
@@ -255,23 +255,23 @@ func _prepare_variant_layers() -> Array[TileMapLayer]:
 	return layers
 
 
-## Pose les arbres de chaque biome qui a une `tree_density` : sur ses propres cases, et
-## quelques-uns sur les cases de son `ground_biome` à moins de TREE_SPILL_RADIUS cases.
-func _place_trees() -> void:
+## Pose les objets de chaque biome qui a une `prop_density` : sur ses propres cases, et
+## quelques-uns sur les cases de son `ground_biome` à moins de PROP_SPILL_RADIUS cases.
+func _place_props() -> void:
 	# Tirages déterminés par la graine (graine différente de celle des variantes).
 	var rng := RandomNumberGenerator.new()
 	rng.seed = world_seed + 1
-	# Arbres de tous les biomes : [pied, index du sprite, retourné].
-	var tree_list := []
+	# Objets de tous les biomes : [pied, index du sprite, retourné].
+	var prop_list := []
 
 	for b in biomes.size():
 		var biome := biomes[b]
-		if biome.tree_density <= 0.0:
+		if biome.prop_density <= 0.0 or biome.props.is_empty():
 			continue
 		var ground_index := biomes.find(biome.ground_biome)
 
 		# Masque (1 pixel par case, blanc = case de ce biome) et liste des cases où poser :
-		# les cases du biome + celles de son sol à moins de TREE_SPILL_RADIUS cases.
+		# les cases du biome + celles de son sol à moins de PROP_SPILL_RADIUS cases.
 		var mask := Image.create(map_size.x, map_size.y, false, Image.FORMAT_L8)
 		var covered := {}
 		for y in map_size.y:
@@ -279,8 +279,8 @@ func _place_trees() -> void:
 				if biome_map[y * map_size.x + x] != b:
 					continue
 				mask.set_pixel(x, y, Color.WHITE)
-				for dy in range(-TREE_SPILL_RADIUS, TREE_SPILL_RADIUS + 1):
-					for dx in range(-TREE_SPILL_RADIUS, TREE_SPILL_RADIUS + 1):
+				for dy in range(-PROP_SPILL_RADIUS, PROP_SPILL_RADIUS + 1):
+					for dx in range(-PROP_SPILL_RADIUS, PROP_SPILL_RADIUS + 1):
 						var cx := x + dx
 						var cy := y + dy
 						if cx < 0 or cy < 0 or cx >= map_size.x or cy >= map_size.y:
@@ -288,33 +288,34 @@ func _place_trees() -> void:
 						var nb := biome_map[cy * map_size.x + cx]
 						if nb == b or nb == ground_index:
 							covered[Vector2i(cx, cy)] = true
-		_scatter_trees(covered, _blurred(mask), biome.tree_density, rng, tree_list)
+		_scatter_props(covered, _blurred(mask), biome, rng, prop_list)
 
-	if trees:
-		trees.set_trees(tree_list)
+	if props:
+		props.set_props(prop_list)
 
 
-# Tire des emplacements d'arbres dans les cases `covered` et les ajoute à `tree_list`.
-# Chance d'avoir un arbre : `density` par case au cœur du biome, de moins en moins vers la
-# bord (selon le masque flou `mask`), jusqu'à zéro un peu au-delà.
-func _scatter_trees(covered: Dictionary, mask: Image, density: float,
-		rng: RandomNumberGenerator, tree_list: Array) -> void:
-	if trees == null or trees.regions.is_empty():
+# Tire des emplacements d'objets dans les cases `covered` et les ajoute à `prop_list`.
+# Chance d'avoir un objet : `biome.prop_density` par case au cœur du biome, de moins en
+# moins vers le bord (selon le masque flou `mask`), jusqu'à zéro un peu au-delà.
+# L'objet est choisi au hasard parmi `biome.props`.
+func _scatter_props(covered: Dictionary, mask: Image, biome: Biome,
+		rng: RandomNumberGenerator, prop_list: Array) -> void:
+	if props == null or props.regions.is_empty():
 		return
-	var chance := density / TREE_CANDIDATES_PER_CELL
+	var chance := biome.prop_density / PROP_CANDIDATES_PER_CELL
 	for cell: Vector2i in covered:
-		for c in TREE_CANDIDATES_PER_CELL:
+		for c in PROP_CANDIDATES_PER_CELL:
 			# Position au hasard dans la case, en cases (ex. 12.4, 30.7).
 			var spot := Vector2(cell) + Vector2(rng.randf(), rng.randf())
 			var m := _mask_at(mask, spot)
-			var p := chance * smoothstep(TREE_MASK_START, TREE_MASK_FULL, m)
+			var p := chance * smoothstep(PROP_MASK_START, PROP_MASK_FULL, m)
 			if rng.randf() < p:
-				tree_list.append([spot * tile_size, rng.randi() % trees.regions.size(),
-						rng.randf() < 0.5])
+				var sprite: int = biome.props[rng.randi() % biome.props.size()]
+				prop_list.append([spot * tile_size, sprite, rng.randf() < 0.5])
 
 
 # Valeur du masque (1 pixel par case) à une position en cases, interpolée entre les centres
-# des cases voisines : la densité d'arbres varie ainsi en douceur au lieu de suivre les cases.
+# des cases voisines : la densité d'objets varie ainsi en douceur au lieu de suivre les cases.
 func _mask_at(mask: Image, spot: Vector2) -> float:
 	var p := spot - Vector2(0.5, 0.5)
 	var x0 := clampi(floori(p.x), 0, map_size.x - 1)

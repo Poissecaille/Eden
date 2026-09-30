@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bhy7foh7x5bv5"
-path="res://.godot/imported/trees_atlas.png-f1655595591d31f99a0d47b5b01ba12f.ctex"
+uid="uid://cntnv3iiwets6"
+path="res://.godot/imported/props_atlas.png-50e4bebc74970722383a3689b765efe9.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://world/assets/trees_atlas.png"
-dest_files=["res://.godot/imported/trees_atlas.png-f1655595591d31f99a0d47b5b01ba12f.ctex"]
+source_file="res://world/assets/props_atlas.png"
+dest_files=["res://.godot/imported/props_atlas.png-50e4bebc74970722383a3689b765efe9.ctex"]
 
 [params]
 

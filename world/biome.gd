@@ -38,10 +38,13 @@ extends Resource
 ## couleur sont alors ignorées.
 @export var ground_biome: Biome
 
-# --- Arbres (sprites posés par-dessus, voir tree_scatter.gd) ---
-## Nombre moyen d'arbres par case au cœur du biome (0 = aucun). La densité baisse près du
-## bord, et quelques arbres débordent sur les cases voisines de son `ground_biome`.
-@export_range(0.0, 4.0) var tree_density := 0.0
+# --- Objets du décor (sprites posés par-dessus, voir prop_scatter.gd) ---
+## Numéros des objets utilisables par ce biome dans PropScatter.regions
+## (props_atlas.png : 0-14 = arbres, 15-25 = buttes, 26-30 = touffes, 31-34 = rochers).
+@export var props: Array[int] = []
+## Nombre moyen d'objets par case au cœur du biome (0 = aucun). La densité baisse près du
+## bord, et quelques objets débordent sur les cases voisines de son `ground_biome`.
+@export_range(0.0, 4.0) var prop_density := 0.0
 
 
 # Vrai si une case avec cette élévation et cette humidité appartient à ce biome.

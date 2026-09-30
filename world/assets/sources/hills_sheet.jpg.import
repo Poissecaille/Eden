@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dh0ykocrtedg4"
-path="res://.godot/imported/forest_sheet.png-3e04cdf5d4c2959c573adba53ef4c3a9.ctex"
+uid="uid://daqs6dceb6vpr"
+path="res://.godot/imported/hills_sheet.jpg-db3eae71fd8bffff8a30b1b6b253072b.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://world/assets/sources/forest_sheet.png"
-dest_files=["res://.godot/imported/forest_sheet.png-3e04cdf5d4c2959c573adba53ef4c3a9.ctex"]
+source_file="res://world/assets/sources/hills_sheet.jpg"
+dest_files=["res://.godot/imported/hills_sheet.jpg-db3eae71fd8bffff8a30b1b6b253072b.ctex"]
 
 [params]
 
