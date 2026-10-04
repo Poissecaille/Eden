@@ -23,6 +23,10 @@ extends Resource
 # Source 0 = grass_atlas.png : chaque texture occupe un bloc de 5 x 3 tuiles de 64 px ;
 #            la texture de la colonne c et de la ligne r de sources/grass_sheet.jpg
 #            commence en (5·c, 3·r).
+# Source 1 = desert_atlas.png : même disposition, à partir de sources/desert_sheet.jpg, mais
+#            chaque texture n'occupe que 5 x 2 tuiles (pattern_size = (5, 2)) en haut de son bloc.
+# Source 2 = swamp_atlas.png : même disposition que la source 1, à partir de sources/swamp_sheet.jpg.
+# Source 3 = water_atlas.png : même disposition que la source 1, à partir de sources/water_sheet.jpg.
 ## Id de la source d'atlas (l'image) dans la TileSet où se trouve la texture du biome.
 @export var source_id := 0
 ## Coin haut-gauche du bloc de texture dans l'atlas ; (-1, -1) = pas de texture, couleur unie.
@@ -40,11 +44,16 @@ extends Resource
 
 # --- Objets du décor (sprites posés par-dessus, voir prop_scatter.gd) ---
 ## Numéros des objets utilisables par ce biome dans PropScatter.regions
-## (props_atlas.png : 0-14 = arbres, 15-25 = buttes, 26-30 = touffes, 31-34 = rochers).
+## (props_atlas.png : 0-14 = arbres, 15-25 = buttes, 26-30 = touffes, 31-34 = rochers,
+## 35-37 = montagnes, 38-40 = montagnes enneigées, 41-50 = quenouilles du marais). Un numéro répété est tiré plus souvent.
 @export var props: Array[int] = []
 ## Nombre moyen d'objets par case au cœur du biome (0 = aucun). La densité baisse près du
 ## bord, et quelques objets débordent sur les cases voisines de son `ground_biome`.
 @export_range(0.0, 4.0) var prop_density := 0.0
+## Écart minimal entre les pieds de deux objets de ce biome, en fraction de leur largeur
+## (0 = aucun écart imposé, 1 = côte à côte, 0.7 = ils se chevauchent d'environ 30 %).
+## Évite que de gros objets s'empilent en paquets ; `prop_density` devient alors un maximum.
+@export_range(0.0, 1.5) var prop_spacing := 0.0
 
 
 # Vrai si une case avec cette élévation et cette humidité appartient à ce biome.

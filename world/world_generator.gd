@@ -10,7 +10,10 @@ extends Node2D
 ##   3. on pose la tuile du biome : une texture de l'atlas, ou une couleur unie ;
 ##   4. si le biome a des variantes, on les pose sur des couches au-dessus,
 ##      que le shader variant_blend.gdshader découpe en taches aux bords doux.
-##   5. les biomes qui ont des objets (arbres en forêt, buttes en collines…) reçoivent des
+##   5. entre sols texturés (herbe, sable…), les textures se mélangent progressivement
+##      (shader edge_blend.gdshader) : pas de frontière brutale en escalier ;
+##   6. écume le long des côtes, entre la terre et l'eau (shore_foam.gdshader) ;
+##   7. les biomes qui ont des objets (arbres en forêt, buttes en collines…) reçoivent des
 ##      sprites par-dessus, de plus en plus clairsemés vers leur bord.
 
 # Émis à la fin de chaque génération (la caméra l'écoute pour se recadrer).
@@ -20,6 +23,10 @@ signal generated
 const COLOR_SOURCE_ID := 100
 # Shader qui rend les couches de variantes visibles seulement par taches.
 const VARIANT_SHADER := preload("res://world/shaders/variant_blend.gdshader")
+# Shader qui fait s'effacer un sol sur son voisin (couches de transition "Edge<n>").
+const EDGE_SHADER := preload("res://world/shaders/edge_blend.gdshader")
+# Shader qui dessine l'écume le long des côtes (nœud "Foam").
+const FOAM_SHADER := preload("res://world/shaders/shore_foam.gdshader")
 
 # Les graines aléatoires sont tirées entre 0 et cette valeur (exclue).
 const MAX_SEED := 1_000_000
@@ -44,6 +51,9 @@ const PROP_CANDIDATES_PER_CELL := 3
 # à apparaître / atteignent leur pleine densité : de rares objets débordent sur le bord.
 const PROP_MASK_START := 0.3
 const PROP_MASK_FULL := 0.8
+# Distance (en cases) autour d'une frontière entre sols texturés où les couches de fondu
+# sont posées : doit couvrir la largeur du fondu (1 case) plus les ondulations.
+const EDGE_RADIUS := 2
 
 # ---------------------------------------------------------------------------
 # Réglages (visibles dans l'inspecteur du nœud World)
@@ -64,6 +74,9 @@ const PROP_MASK_FULL := 0.8
 @export var world_seed := 0
 # Si coché, une graine aléatoire est tirée à chaque lancement du jeu.
 @export var randomize_seed_on_start := true
+## Effets graphiques (shaders) : plaques de variantes, fondus entre sols, écume des côtes,
+## teinte des objets selon le sol. Décoché = tuiles brutes. Touche E en jeu.
+@export var effects_enabled := true
 
 @export_group("Élévation")
 # Plus petit = reliefs plus larges (continents), plus grand = reliefs plus hachés.
@@ -97,6 +110,22 @@ const PROP_MASK_FULL := 0.8
 ## Largeur du fondu entre deux variantes (0 = bord net).
 @export_range(0.0, 0.5) var variant_softness := 0.08
 
+@export_group("Transitions entre sols")
+## Netteté du fondu entre sols texturés (0 = mélange étalé sur environ une case de chaque
+## côté de la frontière, 0.5 = frontière nette).
+@export_range(0.0, 0.5) var edge_sharpness := 0.2
+## Amplitude des ondulations de la frontière, en pixels (0 = elle suit la grille des cases).
+@export_range(0.0, 64.0) var edge_warp := 24.0
+## Taille des ondulations (plus petit = ondulations plus larges).
+@export var edge_warp_scale := 0.01
+
+@export_group("Écume des côtes")
+## Sols d'eau : l'écume est dessinée entre eux et tous les autres sols texturés (la terre).
+## Liste vide = pas d'écume.
+@export var foam_sea_biomes: Array[Biome] = []
+## Profil de l'écume (dentelle puis ligne blanche), voir shore_foam.gdshader.
+@export var foam_strip: Texture2D
+
 @export_group("Éditeur")
 ## Coche pour générer un aperçu directement dans l'éditeur.
 @export var generate_now := false:
@@ -122,6 +151,16 @@ var moisture_map := PackedFloat32Array()
 ## Index du biome de chaque case (y * map_size.x + x), pratique pour le gameplay.
 var biome_map := PackedInt32Array()
 
+# Poids de chaque sol texturé (index du biome -> Image, 1 pixel par case), calculés par
+# _paint_transitions et réutilisés pour l'écume.
+var _ground_weights := {}
+# Décalage de la déformation des frontières, partagé par les fondus et l'écume.
+var _warp_offset := Vector2.ZERO
+# Matériau (shader de teinte) du nœud des objets, mis de côté quand les effets sont coupés.
+var _props_material: Material
+# Vrai si la dernière génération a de l'écume à dessiner (voir _paint_foam).
+var _foam_active := false
+
 
 # Au lancement du jeu : tire une graine si demandé, puis génère la carte.
 # Dans l'éditeur on ne fait rien (il faut cocher `generate_now`).
@@ -133,7 +172,8 @@ func _ready() -> void:
 	generate()
 
 
-# Touches du jeu : R = nouvelle carte, I = active/désactive le mode île.
+# Touches du jeu : R = nouvelle carte, I = active/désactive le mode île,
+# E = active/désactive les effets graphiques (shaders).
 func _unhandled_input(event: InputEvent) -> void:
 	if Engine.is_editor_hint():
 		return
@@ -145,6 +185,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_I:
 				island_mode = not island_mode
 				generate()
+			KEY_E:
+				# Pas besoin de régénérer : on montre / cache seulement les couches à shader.
+				effects_enabled = not effects_enabled
+				_apply_effects()
+				_update_info()
 
 
 # Fonction principale : (re)génère toute la carte.
@@ -177,6 +222,9 @@ func generate() -> void:
 	# --- Étapes 2 à 4 : pour chaque case, choix du biome et pose des tuiles ---
 	ground.clear()
 	biome_map.resize(map_size.x * map_size.y)
+	# Index du biome dont la case porte le sol (la Plaine pour une case de Forêt…).
+	var ground_map := PackedInt32Array()
+	ground_map.resize(map_size.x * map_size.y)
 	for y in map_size.y:
 		for x in map_size.x:
 			var i := y * map_size.x + x
@@ -192,6 +240,7 @@ func generate() -> void:
 			if biome.ground_biome != null:
 				biome = biome.ground_biome
 				ground_index = biomes.find(biome)
+			ground_map[i] = ground_index
 
 			if biome.atlas_coords.x >= 0:
 				# Étape 3a : biome texturé.
@@ -208,11 +257,36 @@ func generate() -> void:
 				# Étape 3b : biome sans texture -> tuile de couleur unie n° b.
 				ground.set_cell(cell, COLOR_SOURCE_ID, Vector2i(ground_index, 0))
 
-	# --- Étape 5 : les objets du décor, posés par-dessus ---
+	# --- Étape 5 : fondus entre sols texturés, au-dessus des variantes ---
+	var next_index := _paint_transitions(ground_map, ground.get_index() + 1 + layers.size())
+
+	# --- Étape 6 : écume des côtes, au-dessus des fondus ---
+	_paint_foam(next_index)
+
+	# --- Étape 7 : les objets du décor, posés par-dessus ---
 	_place_props()
 
+	_apply_effects()
 	_update_info()
 	generated.emit()
+
+
+## Montre ou cache tout ce qui passe par un shader, selon `effects_enabled` :
+## couches de variantes ("Variant<k>") et de fondus ("Edge…"), écume ("Foam"), et teinte des
+## objets selon le sol (matériau du nœud `props`). Sans effets, on voit les tuiles brutes.
+func _apply_effects() -> void:
+	for child in get_children():
+		var child_name := String(child.name)
+		if child is TileMapLayer and (child_name.begins_with("Variant") or child_name.begins_with("Edge")):
+			child.visible = effects_enabled
+	# L'écume reste cachée si _paint_foam l'a désactivée (pas de mer sur la carte).
+	var foam := get_node_or_null("Foam") as CanvasItem
+	if foam:
+		foam.visible = effects_enabled and _foam_active
+	if props:
+		if props.material:
+			_props_material = props.material
+		props.material = _props_material if effects_enabled else null
 
 
 ## Une couche TileMapLayer par variante, au-dessus de `ground`, découpée au pixel par le shader.
@@ -253,6 +327,178 @@ func _prepare_variant_layers() -> Array[TileMapLayer]:
 		mat.set_shader_parameter("softness", variant_softness)
 		layers.append(layer)
 	return layers
+
+
+## Fondus entre sols texturés (l'eau, sans texture, garde un bord net).
+## Chaque sol texturé reçoit un poids : son masque (1 pixel par case) flouté, qui passe de
+## 1 à 0 sur environ une case autour de ses cases. Une couche "Edge<n>" par sol (n = index
+## du biome), plus une "Edge<n>_<k>" par variante pour que ses plaques continuent dans le
+## fondu, posées sur les cases proches d'une frontière entre sols texturés. Le shader
+## edge_blend.gdshader mélange les sols selon leur part du poids total (voir ce fichier).
+## Les couches sont rangées à partir de `first_index` dans l'arbre, dans l'ordre de la liste.
+func _paint_transitions(ground_map: PackedInt32Array, first_index: int) -> int:
+	# Les couches d'une génération précédente sont vidées (un sol a pu perdre sa texture).
+	for child in get_children():
+		if child is TileMapLayer and String(child.name).begins_with("Edge"):
+			child.clear()
+
+	# Cases à repeindre pour chaque sol : cases texturées qui ont, à moins de EDGE_RADIUS
+	# cases, ce sol ET un autre sol texturé (ailleurs, un seul sol : la couche `ground` suffit).
+	var cells_by_ground := {}
+	for y in map_size.y:
+		for x in map_size.x:
+			if biomes[ground_map[y * map_size.x + x]].atlas_coords.x < 0:
+				continue
+			var near := _textured_grounds_near(ground_map, x, y)
+			if near.size() < 2:
+				continue
+			for g in near:
+				if not cells_by_ground.has(g):
+					cells_by_ground[g] = []
+				cells_by_ground[g].append(Vector2i(x, y))
+
+	# Même graine = mêmes fondus. Un seul décalage de déformation pour toutes les couches :
+	# les sols voisins ondulent ensemble.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = world_seed + 2
+	_warp_offset = Vector2(
+			rng.randf_range(0.0, NOISE_OFFSET_RANGE), rng.randf_range(0.0, NOISE_OFFSET_RANGE))
+	_ground_weights.clear()
+
+	# Somme des poids des sols texturés déjà traités (placés avant dans la liste).
+	var lower := Image.create(map_size.x, map_size.y, false, Image.FORMAT_L8)
+	var order := 0
+	for g in biomes.size():
+		var biome := biomes[g]
+		if biome.atlas_coords.x < 0:
+			continue
+
+		# Poids de ce sol : son masque flouté.
+		var mask := Image.create(map_size.x, map_size.y, false, Image.FORMAT_L8)
+		for y in map_size.y:
+			for x in map_size.x:
+				if ground_map[y * map_size.x + x] == g:
+					mask.set_pixel(x, y, Color.WHITE)
+		var weight := _blurred(mask)
+		_ground_weights[g] = weight
+
+		if cells_by_ground.has(g):
+			var weight_texture := ImageTexture.create_from_image(weight)
+			var lower_texture := ImageTexture.create_from_image(lower)
+			# Une couche pour la texture de base, puis une par variante : mêmes poids et même
+			# déformation, donc exactement le même fondu.
+			var blocks: Array[Vector2i] = [biome.atlas_coords]
+			blocks.append_array(biome.extra_variants)
+			for k in blocks.size():
+				var layer_name := "Edge%d" % g if k == 0 else "Edge%d_%d" % [g, k - 1]
+				var layer := _edge_layer(layer_name, first_index + order)
+				order += 1
+				var mat := layer.material as ShaderMaterial
+				mat.set_shader_parameter("weight", weight_texture)
+				mat.set_shader_parameter("lower_weight", lower_texture)
+				mat.set_shader_parameter("map_pixels", Vector2(map_size * tile_size))
+				mat.set_shader_parameter("sharpness", edge_sharpness)
+				mat.set_shader_parameter("warp_offset", _warp_offset)
+				mat.set_shader_parameter("warp_scale", edge_warp_scale)
+				mat.set_shader_parameter("warp_amount", edge_warp)
+				mat.set_shader_parameter("use_variant", k > 0)
+				if k > 0:
+					# Mêmes taches que la couche Variant<k-1> (voir _prepare_variant_layers).
+					var variant := get_node("Variant%d" % (k - 1)) as TileMapLayer
+					var variant_mat := variant.material as ShaderMaterial
+					mat.set_shader_parameter("variant_offset", variant_mat.get_shader_parameter("noise_offset"))
+					mat.set_shader_parameter("variant_scale", variant_scale)
+					mat.set_shader_parameter("variant_threshold", variant_threshold)
+					mat.set_shader_parameter("variant_softness", variant_softness)
+
+				# Même décalage de motif que sur la couche principale : la texture prolonge
+				# exactement le sol (ou sa variante).
+				for cell: Vector2i in cells_by_ground[g]:
+					var offset := Vector2i(cell.x % biome.pattern_size.x, cell.y % biome.pattern_size.y)
+					layer.set_cell(cell, biome.source_id, blocks[k] + offset)
+
+		# Ajoute le poids de ce sol à la somme pour les sols suivants.
+		_add_image(lower, weight)
+	return first_index + order
+
+
+## Écume le long des côtes, entre les sols de `foam_sea_biomes` (la mer) et tous les autres
+## sols texturés (la terre) : un rectangle "Foam" couvrant la carte, placé à `index` dans
+## l'arbre (au-dessus des fondus), dont le shader shore_foam.gdshader ne dessine que la bande
+## de la côte. Les poids additionnés de la terre et de la mer sont ceux des fondus : la
+## frontière terre / mer qu'ils donnent est exactement la côte visible.
+func _paint_foam(index: int) -> void:
+	var foam := get_node_or_null("Foam") as ColorRect
+	# Somme des poids de la mer et de la terre (1 pixel par case).
+	var sea := Image.create(map_size.x, map_size.y, false, Image.FORMAT_L8)
+	var land := Image.create(map_size.x, map_size.y, false, Image.FORMAT_L8)
+	var has_sea := false
+	for g: int in _ground_weights:
+		var is_sea := biomes[g] in foam_sea_biomes
+		has_sea = has_sea or is_sea
+		_add_image(sea if is_sea else land, _ground_weights[g])
+	_foam_active = has_sea and foam_strip != null
+	if not _foam_active:
+		if foam:
+			foam.visible = false
+		return
+
+	if foam == null:
+		foam = ColorRect.new()
+		foam.name = "Foam"
+		foam.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		foam.material = ShaderMaterial.new()
+		foam.material.shader = FOAM_SHADER
+		add_child(foam)
+	move_child(foam, index)
+	foam.visible = effects_enabled
+	foam.position = Vector2.ZERO
+	foam.size = Vector2(map_size * tile_size)
+	var mat := foam.material as ShaderMaterial
+	mat.set_shader_parameter("land_weight", ImageTexture.create_from_image(land))
+	mat.set_shader_parameter("sea_weight", ImageTexture.create_from_image(sea))
+	mat.set_shader_parameter("strip", foam_strip)
+	mat.set_shader_parameter("map_pixels", Vector2(map_size * tile_size))
+	mat.set_shader_parameter("warp_offset", _warp_offset)
+	mat.set_shader_parameter("warp_scale", edge_warp_scale)
+	mat.set_shader_parameter("warp_amount", edge_warp)
+
+
+# Ajoute pixel par pixel l'image `extra` à `total` (même taille, valeurs plafonnées à 1).
+func _add_image(total: Image, extra: Image) -> void:
+	for y in total.get_height():
+		for x in total.get_width():
+			var v := minf(total.get_pixel(x, y).r + extra.get_pixel(x, y).r, 1.0)
+			total.set_pixel(x, y, Color(v, v, v))
+
+
+# Couche de transition `layer_name`, créée au premier appel puis réutilisée, placée à `index`.
+func _edge_layer(layer_name: String, index: int) -> TileMapLayer:
+	var layer := get_node_or_null(layer_name) as TileMapLayer
+	if layer == null:
+		layer = TileMapLayer.new()
+		layer.name = layer_name
+		layer.material = ShaderMaterial.new()
+		layer.material.shader = EDGE_SHADER
+		add_child(layer)
+	move_child(layer, index)
+	layer.tile_set = ground.tile_set
+	return layer
+
+
+# Index des sols texturés présents à moins de EDGE_RADIUS cases de (x, y), diagonales comprises.
+func _textured_grounds_near(ground_map: PackedInt32Array, x: int, y: int) -> Array[int]:
+	var found: Array[int] = []
+	for dy in range(-EDGE_RADIUS, EDGE_RADIUS + 1):
+		for dx in range(-EDGE_RADIUS, EDGE_RADIUS + 1):
+			var cx := x + dx
+			var cy := y + dy
+			if cx < 0 or cy < 0 or cx >= map_size.x or cy >= map_size.y:
+				continue
+			var g := ground_map[cy * map_size.x + cx]
+			if biomes[g].atlas_coords.x >= 0 and not g in found:
+				found.append(g)
+	return found
 
 
 ## Pose les objets de chaque biome qui a une `prop_density` : sur ses propres cases, et
@@ -297,12 +543,25 @@ func _place_props() -> void:
 # Tire des emplacements d'objets dans les cases `covered` et les ajoute à `prop_list`.
 # Chance d'avoir un objet : `biome.prop_density` par case au cœur du biome, de moins en
 # moins vers le bord (selon le masque flou `mask`), jusqu'à zéro un peu au-delà.
-# L'objet est choisi au hasard parmi `biome.props`.
+# L'objet est choisi au hasard parmi `biome.props` qui tiennent dans la carte (voir
+# _prop_fits). Si le biome a un `prop_spacing`,
+# un objet tiré trop près d'un objet déjà posé est abandonné.
 func _scatter_props(covered: Dictionary, mask: Image, biome: Biome,
 		rng: RandomNumberGenerator, prop_list: Array) -> void:
 	if props == null or props.regions.is_empty():
 		return
 	var chance := biome.prop_density / PROP_CANDIDATES_PER_CELL
+
+	# Objets déjà posés, rangés par case : [pied, largeur]. Ainsi on ne compare un nouvel
+	# objet qu'aux objets des cases voisines (à moins de `reach` cases), pas à tous.
+	var placed := {}
+	var reach := 0
+	if biome.prop_spacing > 0.0:
+		var widest := 0
+		for sprite in biome.props:
+			widest = maxi(widest, props.regions[sprite].size.x)
+		reach = ceili(biome.prop_spacing * widest / tile_size)
+
 	for cell: Vector2i in covered:
 		for c in PROP_CANDIDATES_PER_CELL:
 			# Position au hasard dans la case, en cases (ex. 12.4, 30.7).
@@ -310,8 +569,50 @@ func _scatter_props(covered: Dictionary, mask: Image, biome: Biome,
 			var m := _mask_at(mask, spot)
 			var p := chance * smoothstep(PROP_MASK_START, PROP_MASK_FULL, m)
 			if rng.randf() < p:
-				var sprite: int = biome.props[rng.randi() % biome.props.size()]
-				prop_list.append([spot * tile_size, sprite, rng.randf() < 0.5])
+				var pick := rng.randi()
+				var foot := spot * tile_size
+				# L'objet doit tenir entièrement dans la carte. Si celui tiré dépasse (gros
+				# objet près du bord), on tire parmi ceux du biome qui tiennent à cet endroit.
+				var sprite: int = biome.props[pick % biome.props.size()]
+				if not _prop_fits(foot, sprite):
+					var fitting: Array[int] = []
+					for s in biome.props:
+						if _prop_fits(foot, s):
+							fitting.append(s)
+					if fitting.is_empty():
+						continue
+					sprite = fitting[pick % fitting.size()]
+				var width := props.regions[sprite].size.x
+				if reach > 0:
+					if _too_close(placed, foot, width, biome.prop_spacing, reach):
+						continue
+					var key := Vector2i(spot)
+					if not placed.has(key):
+						placed[key] = []
+					placed[key].append([foot, width])
+				prop_list.append([foot, sprite, rng.randf() < 0.5])
+
+
+# Vrai si l'objet n° `sprite`, dont le pied (bas-centre du sprite, voir prop_scatter.gd) est
+# posé sur `foot`, tient entièrement dans la carte.
+func _prop_fits(foot: Vector2, sprite: int) -> bool:
+	var size := Vector2(props.regions[sprite].size)
+	var map_pixels := Vector2(map_size * tile_size)
+	return foot.y - size.y >= 0.0 and foot.y <= map_pixels.y \
+			and foot.x - size.x / 2.0 >= 0.0 and foot.x + size.x / 2.0 <= map_pixels.x
+
+
+# Vrai si un objet de `placed` (voir _scatter_props) est trop près du pied `foot` :
+# l'écart minimal entre deux pieds vaut `spacing` × la moyenne de leurs deux largeurs.
+func _too_close(placed: Dictionary, foot: Vector2, width: int, spacing: float,
+		reach: int) -> bool:
+	var cell := Vector2i(foot / tile_size)
+	for dy in range(-reach, reach + 1):
+		for dx in range(-reach, reach + 1):
+			for other in placed.get(cell + Vector2i(dx, dy), []):
+				if foot.distance_to(other[0]) < spacing * (width + other[1]) / 2.0:
+					return true
+	return false
 
 
 # Valeur du masque (1 pixel par case) à une position en cases, interpolée entre les centres
@@ -469,5 +770,5 @@ func _ensure_tileset() -> void:
 func _update_info() -> void:
 	if info_label == null:
 		return
-	info_label.text = "Seed : %d   |   Île : %s\n[R] nouvelle carte   [I] mode île   [ZQSD / flèches] déplacer   [molette] zoom   [clic droit] glisser" % [
-		world_seed, "oui" if island_mode else "non"]
+	info_label.text = "Seed : %d   |   Île : %s   |   Effets : %s\n[R] nouvelle carte   [I] mode île   [E] effets   [ZQSD / flèches] déplacer   [molette] zoom   [clic droit] glisser" % [
+		world_seed, "oui" if island_mode else "non", "oui" if effects_enabled else "non"]
