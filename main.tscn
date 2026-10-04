@@ -118,10 +118,19 @@ color = Color(0.5, 0.47, 0.45, 1)
 max_height = 0.88
 min_moisture = 0.0
 max_moisture = 1.01
-ground_biome = SubResource("Biome_plain")
-props = Array[int]([35, 35, 36, 36, 37])
+source_id = 4
+atlas_coords = Vector2i(0, 0)
+pattern_size = Vector2i(10, 6)
+extra_variants = Array[Vector2i]([Vector2i(10, 0), Vector2i(0, 6), Vector2i(10, 6)])
+props = Array[int]([35, 35, 36, 36])
 prop_density = 0.3
 prop_spacing = 0.35
+prop_spill_any = true
+ground_props = Array[int]([37])
+ground_prop_density = 0.3
+fringe_props = Array[int]([15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 31, 32, 33, 34])
+fringe_density = 0.6
+fringe_radius = 3
 
 [sub_resource type="Resource" id="Biome_snow"]
 script = ExtResource("3_biome")
@@ -130,10 +139,19 @@ color = Color(0.95, 0.95, 0.97, 1)
 max_height = 1.01
 min_moisture = 0.0
 max_moisture = 1.01
-ground_biome = SubResource("Biome_plain")
-props = Array[int]([38, 38, 39, 39, 40])
+source_id = 4
+atlas_coords = Vector2i(0, 0)
+pattern_size = Vector2i(10, 6)
+extra_variants = Array[Vector2i]([Vector2i(10, 0), Vector2i(0, 6), Vector2i(10, 6)])
+props = Array[int]([38, 38, 39, 39])
 prop_density = 0.3
 prop_spacing = 0.4
+prop_spill_any = true
+ground_props = Array[int]([40])
+ground_prop_density = 0.3
+fringe_props = Array[int]([15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 31, 32, 33, 34])
+fringe_density = 0.6
+fringe_radius = 3
 
 [node name="World" type="Node2D" node_paths=PackedStringArray("ground", "info_label", "props")]
 script = ExtResource("1_world")
@@ -142,6 +160,7 @@ info_label = NodePath("HUD/Info")
 props = NodePath("Props")
 foam_sea_biomes = Array[ExtResource("3_biome")]([SubResource("Biome_deep_water"), SubResource("Biome_water")])
 foam_strip = ExtResource("8_foam")
+foothill_biomes = Array[ExtResource("3_biome")]([SubResource("Biome_mountain"), SubResource("Biome_snow")])
 tile_size = 64
 biomes = Array[ExtResource("3_biome")]([SubResource("Biome_deep_water"), SubResource("Biome_water"), SubResource("Biome_sand"), SubResource("Biome_swamp"), SubResource("Biome_desert"), SubResource("Biome_plain"), SubResource("Biome_forest"), SubResource("Biome_hills"), SubResource("Biome_mountain"), SubResource("Biome_snow")])
 
@@ -153,7 +172,8 @@ z_index = 1
 material = SubResource("PropsMaterial")
 script = ExtResource("5_props")
 texture = ExtResource("6_props_tex")
-regions = Array[Rect2i]([Rect2i(0, 0, 36, 43), Rect2i(38, 0, 45, 51), Rect2i(85, 0, 36, 47), Rect2i(123, 0, 40, 58), Rect2i(165, 0, 32, 55), Rect2i(199, 0, 46, 54), Rect2i(247, 0, 41, 70), Rect2i(290, 0, 38, 70), Rect2i(330, 0, 77, 132), Rect2i(409, 0, 78, 122), Rect2i(489, 0, 43, 64), Rect2i(534, 0, 85, 109), Rect2i(621, 0, 118, 146), Rect2i(741, 0, 100, 116), Rect2i(843, 0, 48, 82), Rect2i(0, 148, 190, 128), Rect2i(192, 148, 140, 87), Rect2i(334, 148, 56, 30), Rect2i(392, 148, 98, 52), Rect2i(492, 148, 127, 64), Rect2i(621, 148, 138, 73), Rect2i(761, 148, 112, 62), Rect2i(875, 148, 116, 63), Rect2i(0, 278, 122, 70), Rect2i(124, 278, 127, 57), Rect2i(253, 278, 99, 50), Rect2i(354, 278, 92, 44), Rect2i(448, 278, 83, 47), Rect2i(533, 278, 60, 52), Rect2i(595, 278, 44, 44), Rect2i(641, 278, 41, 36), Rect2i(684, 278, 54, 37), Rect2i(740, 278, 75, 39), Rect2i(817, 278, 54, 37), Rect2i(873, 278, 63, 35), Rect2i(0, 350, 427, 356), Rect2i(429, 350, 183, 191), Rect2i(614, 350, 53, 46), Rect2i(0, 708, 515, 429), Rect2i(517, 708, 223, 232), Rect2i(742, 708, 54, 47), Rect2i(0, 1139, 19, 41), Rect2i(21, 1139, 8, 14), Rect2i(31, 1139, 42, 61), Rect2i(75, 1139, 7, 20), Rect2i(84, 1139, 16, 41), Rect2i(102, 1139, 14, 38), Rect2i(118, 1139, 31, 58), Rect2i(151, 1139, 22, 52), Rect2i(175, 1139, 18, 52), Rect2i(195, 1139, 8, 24)])
+regions = Array[Rect2i]([Rect2i(0, 0, 36, 43), Rect2i(38, 0, 45, 51), Rect2i(85, 0, 36, 47), Rect2i(123, 0, 40, 58), Rect2i(165, 0, 32, 55), Rect2i(199, 0, 46, 54), Rect2i(247, 0, 41, 70), Rect2i(290, 0, 38, 70), Rect2i(330, 0, 77, 132), Rect2i(409, 0, 78, 122), Rect2i(489, 0, 43, 64), Rect2i(534, 0, 85, 109), Rect2i(621, 0, 118, 146), Rect2i(741, 0, 100, 116), Rect2i(843, 0, 48, 82), Rect2i(0, 148, 64, 43), Rect2i(192, 148, 64, 40), Rect2i(334, 148, 56, 30), Rect2i(392, 148, 64, 34), Rect2i(492, 148, 64, 32), Rect2i(621, 148, 64, 34), Rect2i(761, 148, 64, 35), Rect2i(875, 148, 64, 35), Rect2i(0, 278, 64, 37), Rect2i(124, 278, 64, 29), Rect2i(253, 278, 64, 32), Rect2i(354, 278, 92, 44), Rect2i(448, 278, 83, 47), Rect2i(533, 278, 60, 52), Rect2i(595, 278, 44, 44), Rect2i(641, 278, 41, 36), Rect2i(684, 278, 54, 37), Rect2i(740, 278, 75, 39), Rect2i(817, 278, 54, 37), Rect2i(873, 278, 63, 35), Rect2i(0, 350, 427, 356), Rect2i(429, 350, 183, 191), Rect2i(614, 350, 53, 46), Rect2i(0, 708, 515, 429), Rect2i(517, 708, 223, 232), Rect2i(742, 708, 54, 47), Rect2i(0, 1139, 19, 41), Rect2i(21, 1139, 8, 14), Rect2i(31, 1139, 42, 61), Rect2i(75, 1139, 7, 20), Rect2i(84, 1139, 16, 41), Rect2i(102, 1139, 14, 38), Rect2i(118, 1139, 31, 58), Rect2i(151, 1139, 22, 52), Rect2i(175, 1139, 18, 52), Rect2i(195, 1139, 8, 24)])
+shadowed = Array[int]([35, 36, 37, 38, 39, 40])
 ground_tinted = Array[int]([15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30])
 
 [node name="Camera2D" type="Camera2D" parent="." node_paths=PackedStringArray("world")]

@@ -27,6 +27,8 @@ extends Resource
 #            chaque texture n'occupe que 5 x 2 tuiles (pattern_size = (5, 2)) en haut de son bloc.
 # Source 2 = swamp_atlas.png : même disposition que la source 1, à partir de sources/swamp_sheet.jpg.
 # Source 3 = water_atlas.png : même disposition que la source 1, à partir de sources/water_sheet.jpg.
+# Source 4 = rocky_atlas.png : 4 blocs de 10 x 6 tuiles (pattern_size = (10, 6)) assemblés à partir
+#            de sources/rocky_sheet.jpg ; base (0, 0), variantes (10, 0), (0, 6), (10, 6).
 ## Id de la source d'atlas (l'image) dans la TileSet où se trouve la texture du biome.
 @export var source_id := 0
 ## Coin haut-gauche du bloc de texture dans l'atlas ; (-1, -1) = pas de texture, couleur unie.
@@ -54,6 +56,27 @@ extends Resource
 ## (0 = aucun écart imposé, 1 = côte à côte, 0.7 = ils se chevauchent d'environ 30 %).
 ## Évite que de gros objets s'empilent en paquets ; `prop_density` devient alors un maximum.
 @export_range(0.0, 1.5) var prop_spacing := 0.0
+## Si coché, quelques objets débordent aussi sur les biomes voisins (sauf l'eau), et pas
+## seulement sur `ground_biome` : utile pour les montagnes, qui ont leur propre sol rocheux
+## mais doivent recouvrir son pourtour.
+@export var prop_spill_any := false
+
+# --- Objets du sol : petits objets semés sur les cases du biome, indépendamment des objets
+# principaux (ex. rochers sur le sol rocheux, entre les montagnes) ---
+## Numéros des objets du sol (vide = aucun).
+@export var ground_props: Array[int] = []
+## Nombre moyen d'objets du sol par case.
+@export_range(0.0, 2.0) var ground_prop_density := 0.0
+
+# --- Contreforts : petits objets posés en ceinture autour du biome (ex. buttes et rochers
+# au pied des montagnes), pour qu'il ne repose pas brutalement sur ses voisins ---
+## Numéros des objets de la ceinture (vide = pas de ceinture).
+@export var fringe_props: Array[int] = []
+## Nombre moyen d'objets par case juste au bord du biome ; la densité baisse jusqu'à zéro
+## à `fringe_radius` cases.
+@export_range(0.0, 2.0) var fringe_density := 0.0
+## Largeur de la ceinture, en cases.
+@export_range(1, 6) var fringe_radius := 3
 
 
 # Vrai si une case avec cette élévation et cette humidité appartient à ce biome.

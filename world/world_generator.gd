@@ -27,6 +27,8 @@ const VARIANT_SHADER := preload("res://world/shaders/variant_blend.gdshader")
 const EDGE_SHADER := preload("res://world/shaders/edge_blend.gdshader")
 # Shader qui dessine l'écume le long des côtes (nœud "Foam").
 const FOAM_SHADER := preload("res://world/shaders/shore_foam.gdshader")
+# Shader qui teinte le sol au pied des montagnes (nœud "Foothills").
+const FOOTHILL_SHADER := preload("res://world/shaders/foothill_tint.gdshader")
 
 # Les graines aléatoires sont tirées entre 0 et cette valeur (exclue).
 const MAX_SEED := 1_000_000
@@ -51,6 +53,10 @@ const PROP_CANDIDATES_PER_CELL := 3
 # à apparaître / atteignent leur pleine densité : de rares objets débordent sur le bord.
 const PROP_MASK_START := 0.3
 const PROP_MASK_FULL := 0.8
+# Écart minimal entre deux objets d'une ceinture de contreforts (voir Biome.prop_spacing).
+const FRINGE_SPACING := 0.6
+# Écart minimal entre deux objets du sol (voir Biome.ground_props) : réparti régulièrement.
+const GROUND_PROP_SPACING := 1.5
 # Distance (en cases) autour d'une frontière entre sols texturés où les couches de fondu
 # sont posées : doit couvrir la largeur du fondu (1 case) plus les ondulations.
 const EDGE_RADIUS := 2
@@ -126,6 +132,14 @@ const EDGE_RADIUS := 2
 ## Profil de l'écume (dentelle puis ligne blanche), voir shore_foam.gdshader.
 @export var foam_strip: Texture2D
 
+@export_group("Pied des montagnes")
+## Biomes au pied desquels le sol est teinté (liste vide = pas de teinte).
+@export var foothill_biomes: Array[Biome] = []
+## Couleur multipliée au sol au plus près des massifs (blanc = aucun effet).
+@export var foothill_color := Color(0.86, 0.8, 0.62)
+## Distance (en cases, environ) sur laquelle la teinte s'estompe.
+@export_range(0, 6) var foothill_spread := 3
+
 @export_group("Éditeur")
 ## Coche pour générer un aperçu directement dans l'éditeur.
 @export var generate_now := false:
@@ -160,6 +174,10 @@ var _warp_offset := Vector2.ZERO
 var _props_material: Material
 # Vrai si la dernière génération a de l'écume à dessiner (voir _paint_foam).
 var _foam_active := false
+# Poids additionnés des sols d'eau (1 pixel par case), calculés par _paint_foam.
+var _sea_weight: Image
+# Vrai si la dernière génération a une teinte au pied des montagnes (voir _paint_foothills).
+var _foothills_active := false
 
 
 # Au lancement du jeu : tire une graine si demandé, puis génère la carte.
@@ -262,6 +280,8 @@ func generate() -> void:
 
 	# --- Étape 6 : écume des côtes, au-dessus des fondus ---
 	_paint_foam(next_index)
+	# Teinte du sol au pied des montagnes, placée juste sous l'écume.
+	_paint_foothills(next_index)
 
 	# --- Étape 7 : les objets du décor, posés par-dessus ---
 	_place_props()
@@ -272,8 +292,9 @@ func generate() -> void:
 
 
 ## Montre ou cache tout ce qui passe par un shader, selon `effects_enabled` :
-## couches de variantes ("Variant<k>") et de fondus ("Edge…"), écume ("Foam"), et teinte des
-## objets selon le sol (matériau du nœud `props`). Sans effets, on voit les tuiles brutes.
+## couches de variantes ("Variant<k>") et de fondus ("Edge…"), écume ("Foam"), teinte au pied
+## des montagnes ("Foothills"), et teinte des objets selon le sol (matériau du nœud `props`).
+## Sans effets, on voit les tuiles brutes.
 func _apply_effects() -> void:
 	for child in get_children():
 		var child_name := String(child.name)
@@ -283,6 +304,9 @@ func _apply_effects() -> void:
 	var foam := get_node_or_null("Foam") as CanvasItem
 	if foam:
 		foam.visible = effects_enabled and _foam_active
+	var foothills := get_node_or_null("Foothills") as CanvasItem
+	if foothills:
+		foothills.visible = effects_enabled and _foothills_active
 	if props:
 		if props.material:
 			_props_material = props.material
@@ -437,6 +461,7 @@ func _paint_foam(index: int) -> void:
 		var is_sea := biomes[g] in foam_sea_biomes
 		has_sea = has_sea or is_sea
 		_add_image(sea if is_sea else land, _ground_weights[g])
+	_sea_weight = sea
 	_foam_active = has_sea and foam_strip != null
 	if not _foam_active:
 		if foam:
@@ -462,6 +487,53 @@ func _paint_foam(index: int) -> void:
 	mat.set_shader_parameter("warp_offset", _warp_offset)
 	mat.set_shader_parameter("warp_scale", edge_warp_scale)
 	mat.set_shader_parameter("warp_amount", edge_warp)
+
+
+## Teinte du sol au pied des biomes de `foothill_biomes` (montagnes, neige) : un rectangle
+## "Foothills" couvrant la carte, placé à `index` dans l'arbre (au-dessus des fondus, sous
+## l'écume), dont le shader foothill_tint.gdshader multiplie le sol par `foothill_color`
+## près des massifs, de moins en moins sur `foothill_spread` cases.
+func _paint_foothills(index: int) -> void:
+	var rect := get_node_or_null("Foothills") as ColorRect
+	var mask := Image.create(map_size.x, map_size.y, false, Image.FORMAT_L8)
+	var any := false
+	for y in map_size.y:
+		for x in map_size.x:
+			if biomes[biome_map[y * map_size.x + x]] in foothill_biomes:
+				mask.set_pixel(x, y, Color.WHITE)
+				any = true
+	_foothills_active = any and foothill_spread > 0
+	if not _foothills_active:
+		if rect:
+			rect.visible = false
+		return
+	# Chaque flou étale le masque d'environ une case.
+	for i in foothill_spread:
+		mask = _blurred(mask)
+
+	if rect == null:
+		rect = ColorRect.new()
+		rect.name = "Foothills"
+		rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		rect.material = ShaderMaterial.new()
+		rect.material.shader = FOOTHILL_SHADER
+		add_child(rect)
+	move_child(rect, index)
+	rect.visible = effects_enabled
+	rect.position = Vector2.ZERO
+	rect.size = Vector2(map_size * tile_size)
+	var sea := _sea_weight
+	if sea == null:
+		sea = Image.create(map_size.x, map_size.y, false, Image.FORMAT_L8)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = world_seed + 3
+	var mat := rect.material as ShaderMaterial
+	mat.set_shader_parameter("mask", ImageTexture.create_from_image(mask))
+	mat.set_shader_parameter("sea_weight", ImageTexture.create_from_image(sea))
+	mat.set_shader_parameter("map_pixels", Vector2(map_size * tile_size))
+	mat.set_shader_parameter("tint", foothill_color)
+	mat.set_shader_parameter("noise_offset", Vector2(
+			rng.randf_range(0.0, NOISE_OFFSET_RANGE), rng.randf_range(0.0, NOISE_OFFSET_RANGE)))
 
 
 # Ajoute pixel par pixel l'image `extra` à `total` (même taille, valeurs plafonnées à 1).
@@ -532,12 +604,97 @@ func _place_props() -> void:
 						if cx < 0 or cy < 0 or cx >= map_size.x or cy >= map_size.y:
 							continue
 						var nb := biome_map[cy * map_size.x + cx]
-						if nb == b or nb == ground_index:
+						if nb == b or nb == ground_index \
+								or (biome.prop_spill_any and not biomes[nb] in foam_sea_biomes):
 							covered[Vector2i(cx, cy)] = true
 		_scatter_props(covered, _blurred(mask), biome, rng, prop_list)
 
+	# Objets du sol : semés sur les seules cases du biome, avec leur propre densité et un
+	# écart régulier (rochers sur le sol rocheux…).
+	for b in biomes.size():
+		var biome := biomes[b]
+		if biome.ground_prop_density <= 0.0 or biome.ground_props.is_empty():
+			continue
+		var mask := Image.create(map_size.x, map_size.y, false, Image.FORMAT_L8)
+		var cells := {}
+		for y in map_size.y:
+			for x in map_size.x:
+				if biome_map[y * map_size.x + x] == b:
+					mask.set_pixel(x, y, Color.WHITE)
+					cells[Vector2i(x, y)] = true
+		# Copie du biome dont les objets principaux sont remplacés par les objets du sol,
+		# pour réutiliser _scatter_props.
+		var ground_biome_props := biome.duplicate() as Biome
+		ground_biome_props.props = biome.ground_props
+		ground_biome_props.prop_density = biome.ground_prop_density
+		ground_biome_props.prop_spacing = GROUND_PROP_SPACING
+		_scatter_props(cells, _blurred(mask), ground_biome_props, rng, prop_list)
+
+	# Contreforts : ceinture de petits objets autour des biomes qui en ont (montagnes…).
+	for b in biomes.size():
+		if biomes[b].fringe_density > 0.0 and not biomes[b].fringe_props.is_empty():
+			_scatter_fringe(b, rng, prop_list)
+
 	if props:
 		props.set_props(prop_list)
+
+
+# Pose la ceinture d'objets `fringe_props` du biome n° `b` sur les cases à moins de
+# `fringe_radius` cases de lui : dense au bord du biome, de plus en plus rare en s'éloignant.
+# Jamais dans l'eau (`foam_sea_biomes`) ni sur un biome qui a lui-même une ceinture (les
+# montagnes et la neige ne reçoivent pas les buttes l'une de l'autre).
+func _scatter_fringe(b: int, rng: RandomNumberGenerator, prop_list: Array) -> void:
+	var biome := biomes[b]
+	if props == null or props.regions.is_empty():
+		return
+	# Distance (en cases, diagonales comprises) au biome, calculée en partant de ses cases
+	# et en s'étendant d'une case à chaque tour.
+	var dist := {}
+	var front: Array[Vector2i] = []
+	for y in map_size.y:
+		for x in map_size.x:
+			if biome_map[y * map_size.x + x] == b:
+				front.append(Vector2i(x, y))
+	for d in range(1, biome.fringe_radius + 1):
+		var next: Array[Vector2i] = []
+		for cell in front:
+			for dy in range(-1, 2):
+				for dx in range(-1, 2):
+					var c := cell + Vector2i(dx, dy)
+					if c.x < 0 or c.y < 0 or c.x >= map_size.x or c.y >= map_size.y or dist.has(c):
+						continue
+					var other := biomes[biome_map[c.y * map_size.x + c.x]]
+					if other == biome or other in foam_sea_biomes or not other.fringe_props.is_empty():
+						continue
+					dist[c] = d
+					next.append(c)
+		front = next
+
+	# Même tirage que _scatter_props, avec un écart minimal entre objets de la ceinture.
+	var placed := {}
+	var widest := 0
+	for sprite in biome.fringe_props:
+		widest = maxi(widest, props.regions[sprite].size.x)
+	var reach := ceili(FRINGE_SPACING * widest / tile_size)
+	for cell: Vector2i in dist:
+		# 1 juste au bord, puis décroît jusqu'à 0 au-delà de fringe_radius.
+		var falloff := 1.0 - float(dist[cell] - 1) / biome.fringe_radius
+		var chance := biome.fringe_density * falloff / PROP_CANDIDATES_PER_CELL
+		for c in PROP_CANDIDATES_PER_CELL:
+			var spot := Vector2(cell) + Vector2(rng.randf(), rng.randf())
+			if rng.randf() >= chance:
+				continue
+			var sprite: int = biome.fringe_props[rng.randi() % biome.fringe_props.size()]
+			var foot := spot * tile_size
+			var width := props.regions[sprite].size.x
+			if not _prop_fits(foot, sprite) \
+					or _too_close(placed, foot, width, FRINGE_SPACING, reach):
+				continue
+			var key := Vector2i(spot)
+			if not placed.has(key):
+				placed[key] = []
+			placed[key].append([foot, width])
+			prop_list.append([foot, sprite, rng.randf() < 0.5])
 
 
 # Tire des emplacements d'objets dans les cases `covered` et les ajoute à `prop_list`.
