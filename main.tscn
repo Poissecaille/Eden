@@ -1,4 +1,4 @@
-[gd_scene load_steps=20 format=3 uid="uid://8cev78lhtb2a"]
+[gd_scene load_steps=21 format=3 uid="uid://8cev78lhtb2a"]
 
 [ext_resource type="Script" path="res://world/world_generator.gd" id="1_world"]
 [ext_resource type="Script" path="res://world/camera_controller.gd" id="2_camera"]
@@ -8,6 +8,7 @@
 [ext_resource type="Texture2D" path="res://world/assets/props_atlas.png" id="6_props_tex"]
 [ext_resource type="Shader" path="res://world/shaders/prop_ground_tint.gdshader" id="7_tint"]
 [ext_resource type="Texture2D" path="res://world/assets/foam_strip.png" id="8_foam"]
+[ext_resource type="Texture2D" path="res://world/assets/swamp_bank_strip.png" id="9_bank"]
 
 [sub_resource type="ShaderMaterial" id="PropsMaterial"]
 shader = ExtResource("7_tint")
@@ -56,6 +57,8 @@ color = Color(0.3, 0.4, 0.28, 1)
 max_height = 0.6
 min_moisture = 0.65
 max_moisture = 1.01
+keep_away_from = Array[ExtResource("3_biome")]([SubResource("Biome_deep_water"), SubResource("Biome_water")])
+keep_away_distance = 2
 source_id = 2
 atlas_coords = Vector2i(0, 15)
 pattern_size = Vector2i(10, 6)
@@ -129,6 +132,7 @@ prop_spill_any = true
 ground_props = Array[int]([37])
 ground_prop_density = 0.3
 fringe_props = Array[int]([15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 31, 32, 33, 34])
+fringe_excluded = Array[ExtResource("3_biome")]([SubResource("Biome_forest")])
 fringe_density = 0.6
 fringe_radius = 3
 
@@ -150,6 +154,7 @@ prop_spill_any = true
 ground_props = Array[int]([40])
 ground_prop_density = 0.3
 fringe_props = Array[int]([15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 31, 32, 33, 34])
+fringe_excluded = Array[ExtResource("3_biome")]([SubResource("Biome_forest")])
 fringe_density = 0.6
 fringe_radius = 3
 
@@ -160,6 +165,8 @@ info_label = NodePath("HUD/Info")
 props = NodePath("Props")
 foam_sea_biomes = Array[ExtResource("3_biome")]([SubResource("Biome_deep_water"), SubResource("Biome_water")])
 foam_strip = ExtResource("8_foam")
+bank_biomes = Array[ExtResource("3_biome")]([SubResource("Biome_swamp")])
+bank_strip = ExtResource("9_bank")
 foothill_biomes = Array[ExtResource("3_biome")]([SubResource("Biome_mountain"), SubResource("Biome_snow")])
 tile_size = 64
 biomes = Array[ExtResource("3_biome")]([SubResource("Biome_deep_water"), SubResource("Biome_water"), SubResource("Biome_sand"), SubResource("Biome_swamp"), SubResource("Biome_desert"), SubResource("Biome_plain"), SubResource("Biome_forest"), SubResource("Biome_hills"), SubResource("Biome_mountain"), SubResource("Biome_snow")])

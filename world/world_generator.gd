@@ -57,6 +57,13 @@ const PROP_MASK_FULL := 0.8
 const FRINGE_SPACING := 0.6
 # Écart minimal entre deux objets du sol (voir Biome.ground_props) : réparti régulièrement.
 const GROUND_PROP_SPACING := 1.5
+# Position des bandes de rive en part de terre (0 = pleine eau, 1 = pleine terre, 0.5 = rive
+# visible), du côté eau puis du côté terre (voir shore_foam.gdshader). Écume : la ligne
+# blanche tombe juste côté terre. Berge : le liseré tombe sur la rive, la boue côté terre.
+const FOAM_SEA_SIDE := 0.29
+const FOAM_LAND_SIDE := 0.71
+const BANK_SEA_SIDE := 0.08
+const BANK_LAND_SIDE := 0.58
 # Distance (en cases) autour d'une frontière entre sols texturés où les couches de fondu
 # sont posées : doit couvrir la largeur du fondu (1 case) plus les ondulations.
 const EDGE_RADIUS := 2
@@ -132,6 +139,13 @@ const EDGE_RADIUS := 2
 ## Profil de l'écume (dentelle puis ligne blanche), voir shore_foam.gdshader.
 @export var foam_strip: Texture2D
 
+@export_group("Berge du marais")
+## Sols d'eau de marais : une berge de boue est dessinée entre eux et la terre (hors eau).
+## Liste vide = pas de berge.
+@export var bank_biomes: Array[Biome] = []
+## Profil de la berge (reflets, liseré, boue qui s'estompe), voir shore_foam.gdshader.
+@export var bank_strip: Texture2D
+
 @export_group("Pied des montagnes")
 ## Biomes au pied desquels le sol est teinté (liste vide = pas de teinte).
 @export var foothill_biomes: Array[Biome] = []
@@ -174,6 +188,8 @@ var _warp_offset := Vector2.ZERO
 var _props_material: Material
 # Vrai si la dernière génération a de l'écume à dessiner (voir _paint_foam).
 var _foam_active := false
+# Vrai si la dernière génération a une berge de marais à dessiner (voir _paint_bank).
+var _bank_active := false
 # Poids additionnés des sols d'eau (1 pixel par case), calculés par _paint_foam.
 var _sea_weight: Image
 # Vrai si la dernière génération a une teinte au pied des montagnes (voir _paint_foothills).
@@ -243,13 +259,16 @@ func generate() -> void:
 	# Index du biome dont la case porte le sol (la Plaine pour une case de Forêt…).
 	var ground_map := PackedInt32Array()
 	ground_map.resize(map_size.x * map_size.y)
+	# Étape 2 : quel biome pour chaque case, selon son élévation et son humidité ?
+	for i in biome_map.size():
+		biome_map[i] = _pick_biome(height_map[i], moisture_map[i])
+	# Biomes tenus à distance d'autres (ex. le marais loin de l'eau).
+	_apply_keep_away()
+
 	for y in map_size.y:
 		for x in map_size.x:
 			var i := y * map_size.x + x
-
-			# Étape 2 : quel biome pour cette élévation et cette humidité ?
-			var b := _pick_biome(height_map[i], moisture_map[i])
-			biome_map[i] = b
+			var b := biome_map[i]
 			var biome := biomes[b]
 			var cell := Vector2i(x, y)
 
@@ -280,6 +299,8 @@ func generate() -> void:
 
 	# --- Étape 6 : écume des côtes, au-dessus des fondus ---
 	_paint_foam(next_index)
+	# Berge du marais, au même niveau que l'écume.
+	_paint_bank(next_index)
 	# Teinte du sol au pied des montagnes, placée juste sous l'écume.
 	_paint_foothills(next_index)
 
@@ -292,7 +313,7 @@ func generate() -> void:
 
 
 ## Montre ou cache tout ce qui passe par un shader, selon `effects_enabled` :
-## couches de variantes ("Variant<k>") et de fondus ("Edge…"), écume ("Foam"), teinte au pied
+## couches de variantes ("Variant<k>") et de fondus ("Edge…"), écume ("Foam"), berge ("Bank"), teinte au pied
 ## des montagnes ("Foothills"), et teinte des objets selon le sol (matériau du nœud `props`).
 ## Sans effets, on voit les tuiles brutes.
 func _apply_effects() -> void:
@@ -304,6 +325,9 @@ func _apply_effects() -> void:
 	var foam := get_node_or_null("Foam") as CanvasItem
 	if foam:
 		foam.visible = effects_enabled and _foam_active
+	var bank := get_node_or_null("Bank") as CanvasItem
+	if bank:
+		bank.visible = effects_enabled and _bank_active
 	var foothills := get_node_or_null("Foothills") as CanvasItem
 	if foothills:
 		foothills.visible = effects_enabled and _foothills_active
@@ -446,47 +470,74 @@ func _paint_transitions(ground_map: PackedInt32Array, first_index: int) -> int:
 	return first_index + order
 
 
-## Écume le long des côtes, entre les sols de `foam_sea_biomes` (la mer) et tous les autres
-## sols texturés (la terre) : un rectangle "Foam" couvrant la carte, placé à `index` dans
-## l'arbre (au-dessus des fondus), dont le shader shore_foam.gdshader ne dessine que la bande
-## de la côte. Les poids additionnés de la terre et de la mer sont ceux des fondus : la
-## frontière terre / mer qu'ils donnent est exactement la côte visible.
+## Écume le long des côtes : entre les sols de `foam_sea_biomes` (la mer) et tous les autres
+## sols texturés (la terre). Voir _paint_shore.
 func _paint_foam(index: int) -> void:
-	var foam := get_node_or_null("Foam") as ColorRect
-	# Somme des poids de la mer et de la terre (1 pixel par case).
+	_foam_active = _paint_shore("Foam", index, foam_sea_biomes, [], foam_strip,
+			FOAM_SEA_SIDE, FOAM_LAND_SIDE, true)
+
+
+## Berge du marais : entre les sols de `bank_biomes` (l'eau du marais) et les autres sols
+## texturés, sauf l'eau (pas de berge entre le marais et la mer). Voir _paint_shore.
+func _paint_bank(index: int) -> void:
+	_bank_active = _paint_shore("Bank", index, bank_biomes, foam_sea_biomes, bank_strip,
+			BANK_SEA_SIDE, BANK_LAND_SIDE, false)
+
+
+## Bande dessinée le long d'une rive (écume, berge…) : un rectangle `node_name` couvrant la
+## carte, placé à `index` dans l'arbre (au-dessus des fondus), dont le shader
+## shore_foam.gdshader ne dessine que la bande de la rive. « Eau » = sols de `water`,
+## « terre » = les autres sols texturés sauf ceux de `excluded`, près desquels la bande s'efface. Leurs poids additionnés sont
+## ceux des fondus : la frontière qu'ils donnent est exactement la rive visible.
+## `sea_side` / `land_side` : part de terre où commence / finit la bande (voir le shader).
+## `keep_sea` : garde les poids de l'eau pour la teinte au pied des montagnes.
+## Renvoie vrai si la bande est dessinée.
+func _paint_shore(node_name: String, index: int, water: Array[Biome], excluded: Array[Biome],
+		strip: Texture2D, sea_side: float, land_side: float, keep_sea: bool) -> bool:
+	var rect := get_node_or_null(node_name) as ColorRect
+	# Somme des poids de l'eau et de la terre (1 pixel par case).
 	var sea := Image.create(map_size.x, map_size.y, false, Image.FORMAT_L8)
 	var land := Image.create(map_size.x, map_size.y, false, Image.FORMAT_L8)
+	var blocked := Image.create(map_size.x, map_size.y, false, Image.FORMAT_L8)
 	var has_sea := false
 	for g: int in _ground_weights:
-		var is_sea := biomes[g] in foam_sea_biomes
-		has_sea = has_sea or is_sea
-		_add_image(sea if is_sea else land, _ground_weights[g])
-	_sea_weight = sea
-	_foam_active = has_sea and foam_strip != null
-	if not _foam_active:
-		if foam:
-			foam.visible = false
-		return
+		if biomes[g] in water:
+			has_sea = true
+			_add_image(sea, _ground_weights[g])
+		elif biomes[g] in excluded:
+			_add_image(blocked, _ground_weights[g])
+		else:
+			_add_image(land, _ground_weights[g])
+	if keep_sea:
+		_sea_weight = sea
+	if not has_sea or strip == null:
+		if rect:
+			rect.visible = false
+		return false
 
-	if foam == null:
-		foam = ColorRect.new()
-		foam.name = "Foam"
-		foam.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		foam.material = ShaderMaterial.new()
-		foam.material.shader = FOAM_SHADER
-		add_child(foam)
-	move_child(foam, index)
-	foam.visible = effects_enabled
-	foam.position = Vector2.ZERO
-	foam.size = Vector2(map_size * tile_size)
-	var mat := foam.material as ShaderMaterial
+	if rect == null:
+		rect = ColorRect.new()
+		rect.name = node_name
+		rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		rect.material = ShaderMaterial.new()
+		rect.material.shader = FOAM_SHADER
+		add_child(rect)
+	move_child(rect, index)
+	rect.visible = effects_enabled
+	rect.position = Vector2.ZERO
+	rect.size = Vector2(map_size * tile_size)
+	var mat := rect.material as ShaderMaterial
 	mat.set_shader_parameter("land_weight", ImageTexture.create_from_image(land))
 	mat.set_shader_parameter("sea_weight", ImageTexture.create_from_image(sea))
-	mat.set_shader_parameter("strip", foam_strip)
+	mat.set_shader_parameter("blocked_weight", ImageTexture.create_from_image(blocked))
+	mat.set_shader_parameter("strip", strip)
+	mat.set_shader_parameter("sea_side", sea_side)
+	mat.set_shader_parameter("land_side", land_side)
 	mat.set_shader_parameter("map_pixels", Vector2(map_size * tile_size))
 	mat.set_shader_parameter("warp_offset", _warp_offset)
 	mat.set_shader_parameter("warp_scale", edge_warp_scale)
 	mat.set_shader_parameter("warp_amount", edge_warp)
+	return true
 
 
 ## Teinte du sol au pied des biomes de `foothill_biomes` (montagnes, neige) : un rectangle
@@ -642,7 +693,8 @@ func _place_props() -> void:
 # Pose la ceinture d'objets `fringe_props` du biome n° `b` sur les cases à moins de
 # `fringe_radius` cases de lui : dense au bord du biome, de plus en plus rare en s'éloignant.
 # Jamais dans l'eau (`foam_sea_biomes`) ni sur un biome qui a lui-même une ceinture (les
-# montagnes et la neige ne reçoivent pas les buttes l'une de l'autre).
+# montagnes et la neige ne reçoivent pas les buttes l'une de l'autre), ni sur les biomes de
+# `fringe_excluded` (la forêt).
 func _scatter_fringe(b: int, rng: RandomNumberGenerator, prop_list: Array) -> void:
 	var biome := biomes[b]
 	if props == null or props.regions.is_empty():
@@ -664,7 +716,8 @@ func _scatter_fringe(b: int, rng: RandomNumberGenerator, prop_list: Array) -> vo
 					if c.x < 0 or c.y < 0 or c.x >= map_size.x or c.y >= map_size.y or dist.has(c):
 						continue
 					var other := biomes[biome_map[c.y * map_size.x + c.x]]
-					if other == biome or other in foam_sea_biomes or not other.fringe_props.is_empty():
+					if other == biome or other in foam_sea_biomes or not other.fringe_props.is_empty() \
+							or other in biome.fringe_excluded:
 						continue
 					dist[c] = d
 					next.append(c)
@@ -881,13 +934,44 @@ func _apply_island_falloff() -> void:
 			height_map[i] *= mask
 
 
-# Renvoie l'index du premier biome dont les seuils correspondent à la case.
-# Si aucun ne correspond, prend le dernier de la liste.
-func _pick_biome(height: float, moisture: float) -> int:
+# Renvoie l'index du premier biome dont les seuils correspondent à la case, en sautant
+# l'index `skip`. Si aucun ne correspond, prend le dernier de la liste.
+func _pick_biome(height: float, moisture: float, skip := -1) -> int:
 	for i in biomes.size():
-		if biomes[i].matches(height, moisture):
+		if i != skip and biomes[i].matches(height, moisture):
 			return i
 	return biomes.size() - 1
+
+
+## Pour chaque biome qui a une liste `keep_away_from` : ses cases à moins de
+## `keep_away_distance` cases (diagonales comprises) d'un de ces biomes reçoivent le biome
+## suivant qui correspond à leur élévation et leur humidité (le marais devient de la plaine
+## au bord de l'eau). Les biomes à éviter sont lus avant tout changement.
+func _apply_keep_away() -> void:
+	var original := biome_map.duplicate()
+	for b in biomes.size():
+		var biome := biomes[b]
+		if biome.keep_away_from.is_empty():
+			continue
+		var r := biome.keep_away_distance
+		for y in map_size.y:
+			for x in map_size.x:
+				var i := y * map_size.x + x
+				if original[i] != b:
+					continue
+				var near := false
+				for dy in range(-r, r + 1):
+					for dx in range(-r, r + 1):
+						var cx := x + dx
+						var cy := y + dy
+						if cx >= 0 and cy >= 0 and cx < map_size.x and cy < map_size.y \
+								and biomes[original[cy * map_size.x + cx]] in biome.keep_away_from:
+							near = true
+							break
+					if near:
+						break
+				if near:
+					biome_map[i] = _pick_biome(height_map[i], moisture_map[i], b)
 
 
 ## Ajoute à la TileSet de `ground` une source de tuiles de couleur unie (une par biome).

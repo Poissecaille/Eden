@@ -12,6 +12,9 @@ shader_type canvas_item;
 // Poids additionnés de la terre et de la mer (ceux des fondus, edge_blend.gdshader).
 uniform sampler2D land_weight : filter_linear;
 uniform sampler2D sea_weight : filter_linear;
+// Poids des sols exclus (ex. la mer pour la berge du marais) : pas de bande là où ils
+// dominent, pour éviter des bouts de berge à la rencontre de trois sols.
+uniform sampler2D blocked_weight : filter_linear, hint_default_black;
 // Profil de l'écume, répété le long du rivage.
 uniform sampler2D strip : filter_nearest, repeat_enable;
 // Taille de la carte en pixels.
@@ -32,6 +35,9 @@ const vec2 WARP_Y_SHIFT = vec2(57.3, 91.7);
 const float WARP_GAIN = 6.0;
 // En dessous de ce poids total (sol sans texture), pas d'écume.
 const float MIN_WEIGHT = 0.05;
+// Poids des sols exclus à partir duquel la bande s'efface / a disparu.
+const float BLOCK_START = 0.05;
+const float BLOCK_FULL = 0.25;
 
 varying vec2 world_pos;
 
@@ -64,6 +70,7 @@ void fragment() {
 		vec4 foam = mix(along_y, along_x, smoothstep(0.3, 0.7, n.y));
 		// Estompe l'écume là où ni la terre ni la mer ne dominent nettement (poids total faible).
 		foam.a *= smoothstep(MIN_WEIGHT, 0.3, total);
+		foam.a *= 1.0 - smoothstep(BLOCK_START, BLOCK_FULL, texture(blocked_weight, uv).r);
 		COLOR = foam;
 	}
 }

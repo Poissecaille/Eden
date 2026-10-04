@@ -19,6 +19,13 @@ extends Resource
 @export_range(0.0, 1.01) var min_moisture := 0.0
 @export_range(0.0, 1.01) var max_moisture := 1.01
 
+# --- Distance à garder avec d'autres biomes ---
+## Biomes que ce biome ne doit jamais toucher (ex. le marais et l'eau). Ses cases trop
+## proches prennent le biome suivant qui correspond à leur élévation et leur humidité.
+@export var keep_away_from: Array[Biome] = []
+## Nombre minimal de cases entre ce biome et ceux de `keep_away_from`.
+@export_range(1, 6) var keep_away_distance := 2
+
 # --- Texture dans un atlas de la TileSet (terrain_tileset.tres) ---
 # Source 0 = grass_atlas.png : chaque texture occupe un bloc de 5 x 3 tuiles de 64 px ;
 #            la texture de la colonne c et de la ligne r de sources/grass_sheet.jpg
@@ -77,6 +84,8 @@ extends Resource
 @export_range(0.0, 2.0) var fringe_density := 0.0
 ## Largeur de la ceinture, en cases.
 @export_range(1, 6) var fringe_radius := 3
+## Biomes où la ceinture n'est jamais posée (ex. pas de buttes entre les arbres de la forêt).
+@export var fringe_excluded: Array[Biome] = []
 
 
 # Vrai si une case avec cette élévation et cette humidité appartient à ce biome.
