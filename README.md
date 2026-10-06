@@ -1,4 +1,4 @@
-# Extinct
+# Eden
 
 ![Quatre cartes générées](docs/screenshot.png)
 
